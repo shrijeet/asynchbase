@@ -27,6 +27,7 @@
 package org.hbase.async;
 
 import org.jboss.netty.buffer.ChannelBuffer;
+import org.jboss.netty.buffer.ChannelBuffers;
 
 /**
  * Puts some data into HBase.
@@ -545,6 +546,44 @@ public final class PutRequest extends BatchableRpc
     buf.writeInt(qualifiers.length);  // Number of "KeyValues" that follow.
     buf.writeInt(payloadSize());  // Size of the KV that follows.
     serializePayload(buf);
+  }
+
+  /** Serialize put with all details to be replayed later. **/
+  public ChannelBuffer serializeWithTablename() {
+    int payload = predictPutSize() + table.length;
+    final ChannelBuffer buf = ChannelBuffers.buffer(payload);       
+    serializeInto(buf); // Put object.
+    writeByteArray(buf, table); // Table name.    
+    return buf;
+  }
+
+  /** DeSerialize the fields of this object from gievn buffer. **/
+  public static PutRequest deserializeFrom(final ChannelBuffer buf) {
+    buf.readByte(); // Code for a `Put' parameter.
+    buf.readByte(); // Code again (see HBASE-2877).
+    buf.readByte(); // Put#PUT_VERSION.
+    byte[] key = readByteArray(buf); // The row key.
+    long timestamp = buf.readLong(); // Timestamp.
+    long lockid = buf.readLong(); // Lock ID.
+    boolean durable = buf.readByte() == 0x01 ? true : false; // Whether or not
+                                                             // to use the WAL.
+    buf.readInt(); // Number of families that follow.
+    byte[] family = readByteArray(buf); // The column family.
+    int num_kv = buf.readInt(); // Number of "KeyValues" that follow.
+    buf.readInt(); // Size of the KV that follows.
+    KeyValue kv = null;
+    byte[][] qualifiers = new byte[num_kv][];
+    byte[][] values = new byte[num_kv][];
+    for (int i = 0; i < num_kv; i++) {
+      buf.readInt(); // Total length of KV.
+      kv = KeyValue.fromBuffer(buf, kv);
+      qualifiers[i] = kv.qualifier();
+      values[i] = kv.value();
+    }
+    byte[] table = readByteArray(buf); // Table name.
+    PutRequest put = new PutRequest(table, key, family, qualifiers, values, timestamp, lockid);
+    put.setDurable(durable);
+    return put;
   }
 
 }
