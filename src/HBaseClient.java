@@ -242,6 +242,12 @@ public final class HBaseClient {
   /** Watcher to keep track of the -ROOT- region in ZooKeeper.  */
   private final ZKClient zkclient;
 
+
+  /**
+   * FileWrite through which put requests will be serialized to disk.
+   */
+  private final PutRequestFileWriter filewriter;
+
   /**
    * The client currently connected to the -ROOT- region.
    * If this is {@code null} then we currently don't know where the -ROOT-
@@ -495,6 +501,12 @@ public final class HBaseClient {
                      final ClientSocketChannelFactory channel_factory) {
     this.channel_factory = channel_factory;
     zkclient = new ZKClient(quorum_spec, base_path);
+    try {
+      this.filewriter = new AsyncPutRequestFileWriter("/tmp/asyncputs.bin");
+      this.filewriter.open();
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   /**
@@ -704,6 +716,7 @@ public final class HBaseClient {
    * failure.  TODO(tsuna): Document possible / common failure scenarios.
    */
   public Deferred<Object> shutdown() {
+    this.filewriter.close();
     // This is part of step 3.  We need to execute this in its own thread
     // because Netty gets stuck in an infinite loop if you try to shut it
     // down from within a thread of its own thread pool.  They don't want
@@ -1259,6 +1272,10 @@ public final class HBaseClient {
   public Deferred<Object> put(final PutRequest request) {
     num_puts.increment();
     return sendRpcToRegion(request);
+  }
+
+  public void pseudoPut(final PutRequest request) {
+    filewriter.append(request);
   }
 
   /**
